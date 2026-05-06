@@ -1,0 +1,124 @@
+from abc import ABC, abstractmethod
+
+# Абстрактный класс
+class BaseUser(ABC):
+    def __init__(self, user_id, name):
+        self.user_id = user_id
+        self.name = name
+        self._courses = []
+        self.__password = None
+
+    def set_password(self, password):
+        self.__password = password
+
+    def check_password(self, password):
+        return self.__password == password
+
+    @abstractmethod
+    def get_permissions(self):
+        pass
+
+    @abstractmethod
+    def get_role_info(self):
+        pass
+
+# Курс
+class Course:
+    def __init__(self, course_id, title, teacher):
+        self.course_id = course_id
+        self.title = title
+        self.teacher = teacher
+        self.students = []       
+        self.assignments = []
+
+    def add_student(self, student):
+        if student not in self.students:
+            self.students.append(student)
+
+    def add_assignment(self, assignment):
+        self.assignments.append(assignment)
+
+# Задание
+class Assignment:
+    def __init__(self, title):
+        self.title = title
+        self.is_completed = False 
+        self.is_checked = False     
+        self.student = None
+
+    def complete(self, student):
+        self.is_completed = True
+        self.student = student
+
+    def check(self):
+        if self.is_completed:
+            self.is_checked = True
+        else:
+            print("Нельзя проверить — задание не выполнено")
+
+# Студент
+class Student(BaseUser):
+    def get_role_info(self):
+        return "Я студент"
+
+    def get_permissions(self):
+        return "просмотр"
+
+    def enroll(self, course):
+        course.add_student(self)
+        self._courses.append(course)
+
+    def complete_assignment(self, assignment):
+        assignment.complete(self)
+
+# Преподаватель
+class Teacher(BaseUser):
+    def get_role_info(self):
+        return "Я преподаватель"
+
+    def get_permissions(self):
+        return "создание/редактирование"
+
+    def create_course(self, course_id, title):
+        return Course(course_id, title, self)
+
+    def create_assignment(self, course, title):
+        assignment = Assignment(title)
+        course.add_assignment(assignment)
+        return assignment
+
+    def check_assignment(self, assignment):
+        assignment.check()
+
+# МИНИМАЛЬНЫЙ СЦЕНАРИЙ
+# 1. создание преподавателя
+teacher = Teacher(1, "бекболот")
+
+# 2. создание курса
+course = teacher.create_course(101, "Python OOP")
+
+# 3. создание студента
+student = Student(2, "Алина")
+
+# 4. запись студента на курс
+student.enroll(course)
+
+# 5. добавление задания
+assignment = teacher.create_assignment(course, "Домашка 1")
+
+# 6. выполнение задания студентом
+student.complete_assignment(assignment)
+
+# 7. проверка задания преподавателем
+teacher.check_assignment(assignment)
+
+# Проверка результата
+print("Студенты курса:", [s.name for s in course.students])
+print("Задание выполнено:", assignment.is_completed)
+print("Задание проверено:", assignment.is_checked)
+
+# Полиморфизм
+users = [student, teacher]
+
+for user in users:
+    print(user.get_role_info())
