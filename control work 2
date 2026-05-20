@@ -1,0 +1,485 @@
+import sqlite3
+import time
+from datetime import datetime
+from abc import ABC, abstractmethod
+
+# DECORATORS
+
+def log_action(func):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+
+        result = func(*args, **kwargs)
+
+        end = time.time()
+        print(f"[LOG] {func.__name__} выполнен в {datetime.now()}")
+        print(f"[TIME] {(end - start):.4f} секунд")
+        return result
+    return wrapper
+
+
+def admin_required(func):
+    def wrapper(user, *args, **kwargs):
+        if not isinstance(user, Admin):
+            print("[ERROR] Доступ запрещён! Только администратор!")
+            return None
+        return func(user, *args, **kwargs)
+    return wrapper
+
+
+# UTILS
+
+class Validator:
+    @staticmethod
+    def validate_email(email):
+        return "@" in email and "." in email
+
+
+# DATABASE
+
+class Database:
+    def __init__(self, db_name="academy.db"):
+        self.conn = sqlite3.connect(db_name)
+        self.cursor = self.conn.cursor()
+
+    def execute(self, query, params=()):
+        self.cursor.execute(query, params)
+        self.conn.commit()
+
+    def fetchall(self, query, params=()):
+        self.cursor.execute(query, params)
+        return self.cursor.fetchall()
+
+    def fetchone(self, query, params=()):
+        self.cursor.execute(query, params)
+        return self.cursor.fetchone()
+
+    def close(self):
+        self.conn.close()
+
+
+def create_tables():
+    db = Database()
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        password TEXT NOT NULL
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS teachers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        password TEXT NOT NULL,
+        subject TEXT
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS courses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT
+    )
+    """)
+
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS enrollments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER,
+        course_id INTEGER,
+        FOREIGN KEY(student_id) REFERENCES students(id),
+        FOREIGN KEY(course_id) REFERENCES courses(id)
+    )
+    """)
+
+    db.close()
+
+
+# ABSTRACT CLASS
+
+class User(ABC):
+    @abstractmethod
+    def login(self):
+        pass
+
+
+# MIXINS
+
+class NotificationMixin:
+    def notify(self, message):
+        print(f"[NOTIFY] {message}")
+
+
+class LoggerMixin:
+    def log(self, message):
+        print(f"[LOGGER] {message}")
+
+
+# PERSON + INHERITANCE
+
+class Person(User):
+    def __init__(self, name, email, password):
+        if not Validator.validate_email(email):
+            raise ValueError("Неверный email!")
+
+        self.name = name              # public
+        self._email = email           # protected
+        self.__password = password    # private
+
+    def check_password(self, password):
+        return self.__password == password
+
+    def login(self):
+        return f"{self.name} вошёл в систему!"
+
+    def get_info(self):
+        return f"Person: {self.name}, Email: {self._email}"
+
+    def __str__(self):
+        return self.get_info()
+
+    def __repr__(self):
+        return f"Person(name={self.name}, email={self._email})"
+
+
+# STUDENT
+
+class Student(Person):
+    def __init__(self, name, email, password):
+        super().__init__(name, email, password)
+
+    def get_info(self):
+        return f"Student: {self.name}, Email: {self._email}"
+
+    def __eq__(self, other):
+        return isinstance(other, Student) and self.name == other.name
+
+    @classmethod
+    def from_string(cls, string_data):
+        # "Alina, alina@gmail.com, 1234"
+        name, email, password = string_data.split(",")
+        return cls(name.strip(), email.strip(), password.strip())
+
+# TEACHER (Multiple Inheritance)
+
+class Teacher(Person, NotificationMixin, LoggerMixin):
+    def __init__(self, name, email, password, subject=""):
+        super().__init__(name, email, password)
+        self.subject = subject
+
+    def get_info(self):
+        return f"Teacher: {self.name}, Subject: {self.subject}"
+
+
+# ADMIN
+
+class Admin(Person):
+    def get_info(self):
+        return f"Admin: {self.name}"
+
+# COURSE
+
+class Course:
+    def __init__(self, title, description=""):
+        self.title = title
+        self.description = description
+        self.students = []
+
+    def add_student(self, student):
+        self.students.append(student)
+
+    def __len__(self):
+        return len(self.students)
+
+    def __str__(self):
+        return f"Course: {self.title} ({len(self.students)} students)"
+
+    def __repr__(self):
+        return f"Course(title={self.title})"
+
+
+# SERVICES (CRUD)
+
+class StudentService:
+
+    @log_action
+    def add_student(self, name, email, password):
+        db = Database()
+        db.execute("INSERT INTO students(name, email, password) VALUES(?, ?, ?)",
+                   (name, email, password))
+        db.close()
+        print("Студент добавлен!")
+
+    def get_students(self):
+        db = Database()
+        students = db.fetchall("SELECT id, name, email FROM students")
+        db.close()
+        return students
+
+    @log_action
+    def update_student(self, student_id, new_name, new_email):
+        db = Database()
+        db.execute("UPDATE students SET name = ?, email = ? WHERE id = ?",
+                   (new_name, new_email, student_id))
+        db.close()
+        print("Студент обновлён!")
+
+    @admin_required
+    @log_action
+    def delete_student(self, admin_user, student_id):
+        db = Database()
+        db.execute("DELETE FROM students WHERE id = ?", (student_id,))
+        db.close()
+        print("Студент удалён!")
+
+
+class TeacherService:
+
+    @log_action
+    def add_teacher(self, name, email, password, subject):
+        db = Database()
+        db.execute("INSERT INTO teachers(name, email, password, subject) VALUES(?, ?, ?, ?)",
+                   (name, email, password, subject))
+        db.close()
+        print("Преподаватель добавлен!")
+
+    def get_teachers(self):
+        db = Database()
+        teachers = db.fetchall("SELECT id, name, email, subject FROM teachers")
+        db.close()
+        return teachers
+
+    @log_action
+    def update_teacher(self, teacher_id, new_name, new_email, new_subject):
+        db = Database()
+        db.execute("UPDATE teachers SET name = ?, email = ?, subject = ? WHERE id = ?",
+                   (new_name, new_email, new_subject, teacher_id))
+        db.close()
+        print("Преподаватель обновлён!")
+
+    @admin_required
+    @log_action
+    def delete_teacher(self, admin_user, teacher_id):
+        db = Database()
+        db.execute("DELETE FROM teachers WHERE id = ?", (teacher_id,))
+        db.close()
+        print("Преподаватель удалён!")
+
+
+class CourseService:
+
+    @log_action
+    def add_course(self, title, description):
+        db = Database()
+        db.execute("INSERT INTO courses(title, description) VALUES(?, ?)",
+                   (title, description))
+        db.close()
+        print("Курс добавлен!")
+
+    def get_courses(self):
+        db = Database()
+        courses = db.fetchall("SELECT id, title, description FROM courses")
+        db.close()
+        return courses
+
+    @log_action
+    def update_course(self, course_id, new_title, new_description):
+        db = Database()
+        db.execute("UPDATE courses SET title = ?, description = ? WHERE id = ?",
+                   (new_title, new_description, course_id))
+        db.close()
+        print("Курс обновлён!")
+
+    @admin_required
+    @log_action
+    def delete_course(self, admin_user, course_id):
+        db = Database()
+        db.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+        db.close()
+        print("Курс удалён!")
+
+
+class EnrollmentService:
+
+    @log_action
+    def enroll_student(self, student_id, course_id):
+        db = Database()
+
+        check = db.fetchone("""
+        SELECT id FROM enrollments 
+        WHERE student_id = ? AND course_id = ?
+        """, (student_id, course_id))
+
+        if check:
+            print("Студент уже записан на этот курс!")
+            db.close()
+            return
+
+        db.execute("INSERT INTO enrollments(student_id, course_id) VALUES(?, ?)",
+                   (student_id, course_id))
+
+        db.close()
+        print("Студент записан на курс!")
+
+    def get_enrollments(self):
+        db = Database()
+        data = db.fetchall("""
+        SELECT enrollments.id, students.name, courses.title
+        FROM enrollments
+        JOIN students ON students.id = enrollments.student_id
+        JOIN courses ON courses.id = enrollments.course_id
+        """)
+        db.close()
+        return data
+
+    def get_student_courses(self, student_id):
+        db = Database()
+        courses = db.fetchall("""
+        SELECT courses.id, courses.title
+        FROM enrollments
+        JOIN courses ON courses.id = enrollments.course_id
+        WHERE enrollments.student_id = ?
+        """, (student_id,))
+        db.close()
+        return courses
+
+
+# MAIN MENU
+
+def show_list(data, empty_message="Нет данных."):
+    if not data:
+        print(empty_message)
+        return
+    for row in data:
+        print(row)
+
+
+def main():
+    create_tables()
+
+    student_service = StudentService()
+    teacher_service = TeacherService()
+    course_service = CourseService()
+    enrollment_service = EnrollmentService()
+
+    admin = Admin("Admin", "admin@gmail.com", "1234")
+
+    print("\n DEMO classmethod from_string ")
+    demo_student = Student.from_string("Alina, alina@gmail.com, 0000")
+    print(demo_student.get_info())
+
+    while True:
+        print("\n Academy Management System ")
+        print("1. Добавить студента")
+        print("2. Показать студентов")
+        print("3. Обновить студента")
+        print("4. Удалить студента (только админ)")
+
+        print("5. Добавить преподавателя")
+        print("6. Показать преподавателей")
+        print("7. Обновить преподавателя")
+        print("8. Удалить преподавателя (только админ)")
+
+        print("9. Добавить курс")
+        print("10. Показать курсы")
+        print("11. Обновить курс")
+        print("12. Удалить курс (только админ)")
+
+        print("13. Записать студента на курс")
+        print("14. Показать записи enrollments")
+        print("15. Показать курсы студента")
+
+        print("0. Выход")
+
+        choice = input("Выбор: ")
+
+        # STUDENTS
+        if choice == "1":
+            name = input("Имя: ")
+            email = input("Email: ")
+            password = input("Пароль: ")
+            student_service.add_student(name, email, password)
+
+        elif choice == "2":
+            show_list(student_service.get_students(), "Студентов нет.")
+
+        elif choice == "3":
+            student_id = int(input("ID студента: "))
+            new_name = input("Новое имя: ")
+            new_email = input("Новый email: ")
+            student_service.update_student(student_id, new_name, new_email)
+
+        elif choice == "4":
+            student_id = int(input("ID студента: "))
+            student_service.delete_student(admin, student_id)
+
+        # TEACHERS
+        elif choice == "5":
+            name = input("Имя: ")
+            email = input("Email: ")
+            password = input("Пароль: ")
+            subject = input("Предмет: ")
+            teacher_service.add_teacher(name, email, password, subject)
+
+        elif choice == "6":
+            show_list(teacher_service.get_teachers(), "Преподавателей нет.")
+
+        elif choice == "7":
+            teacher_id = int(input("ID преподавателя: "))
+            new_name = input("Новое имя: ")
+            new_email = input("Новый email: ")
+            new_subject = input("Новый предмет: ")
+            teacher_service.update_teacher(teacher_id, new_name, new_email, new_subject)
+
+        elif choice == "8":
+            teacher_id = int(input("ID преподавателя: "))
+            teacher_service.delete_teacher(admin, teacher_id)
+
+        # COURSES
+        elif choice == "9":
+            title = input("Название курса: ")
+            description = input("Описание: ")
+            course_service.add_course(title, description)
+
+        elif choice == "10":
+            show_list(course_service.get_courses(), "Курсов нет.")
+
+        elif choice == "11":
+            course_id = int(input("ID курса: "))
+            new_title = input("Новое название: ")
+            new_desc = input("Новое описание: ")
+            course_service.update_course(course_id, new_title, new_desc)
+
+        elif choice == "12":
+            course_id = int(input("ID курса: "))
+            course_service.delete_course(admin, course_id)
+
+        # ENROLLMENT
+        elif choice == "13":
+            student_id = int(input("ID студента: "))
+            course_id = int(input("ID курса: "))
+            enrollment_service.enroll_student(student_id, course_id)
+
+        elif choice == "14":
+            show_list(enrollment_service.get_enrollments(), "Записей enrollments нет.")
+
+        elif choice == "15":
+            student_id = int(input("ID студента: "))
+            show_list(enrollment_service.get_student_courses(student_id), "У студента нет курсов.")
+
+        elif choice == "0":
+            print("Выход...")
+            break
+
+        else:
+            print("Неверный выбор!")
+
+
+if __name__ == "__main__":
+    main()
